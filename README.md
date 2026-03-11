@@ -58,6 +58,42 @@ Both modes share the same `languages.yaml`, `progress.yaml`, and `templates/` di
 
 ---
 
+### Mode 4 — Claude Code CLI (headless agent)
+
+For teams already using Claude Code as a development tool, repogen can be driven entirely from the Claude Code CLI (`claude`) without opening an IDE. Clone the repo and run Claude Code in print mode to generate individual repos non-interactively, or use it as a scriptable step in a CI pipeline.
+
+```bash
+git clone https://github.com/kernoio/repogen && cd repogen
+
+# Generate a single repo non-interactively
+claude --print "Read CLAUDE.md and languages.yaml. Generate a Kotlin/Ktor CRUD repo with Postgres in generated/crud-kotlin-ktor. Port 9050."
+
+# Verify it
+scripts/verify.sh generated/crud-kotlin-ktor 9050
+
+# Generate an edge case
+claude --print "Read CLAUDE.md and specs/edge-cases.md. Create an edge-missing-dockerfile-ruby-rails repo in generated/ with source code but no Dockerfile, and a README describing the intended failure."
+```
+
+Because `CLAUDE.md` is present, Claude Code reads all conventions, fix patterns, and expected output format automatically — no prompt engineering required. The same prompts work whether you type them interactively in the IDE or pipe them through the CLI.
+
+**Using Claude Code CLI in a generation loop:**
+
+```bash
+# Loop over pending repos from matrix.yaml and generate each one
+for repo in $(python3 scripts/progress.py pending); do
+  claude --print "Read CLAUDE.md. Generate $repo in generated/$repo following all conventions."
+  scripts/verify.sh generated/$repo <port>
+  python3 scripts/progress.py set $repo done --verified
+done
+```
+
+This is the lightest-weight path to full automation: no API key management in your own code, no SDK integration — just the Claude Code CLI reading the same `CLAUDE.md` context that powers the interactive IDE session.
+
+**Requires:** Claude Code CLI installed (`npm install -g @anthropic-ai/claude-code`) and authenticated.
+
+---
+
 ## Installation
 
 ```bash
@@ -236,6 +272,28 @@ languages:
     runtime_image: node:20-alpine
     default_internal_port: 3000
     healthcheck_start_period: 30
+```
+
+---
+
+## Examples
+
+The `examples/` directory contains two pre-built, verified repos that serve as concrete reference for the agent in IDE-native and Claude Code CLI modes:
+
+| Repo | Stack | Pattern |
+|------|-------|---------|
+| `examples/crud-python-fastapi` | Python + FastAPI + Postgres | Interpreted language, pip deps, uvicorn |
+| `examples/crud-go-gin` | Go + Gin + Postgres | Compiled multi-stage build, static binary |
+
+These are real repos from the generated dataset — built, verified, and committed as reference. When Claude Code generates a new repo it hasn't seen before, it reads these examples alongside `CLAUDE.md` to understand the expected structure, rather than relying on instructions alone.
+
+To add more examples (recommended for new language families):
+
+```bash
+# After verifying a new repo, copy it to examples/
+cp -r generated/crud-ruby-rails examples/crud-ruby-rails
+git add examples/crud-ruby-rails
+git commit -m "examples: add Ruby/Rails reference"
 ```
 
 ---
