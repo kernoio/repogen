@@ -1,0 +1,190 @@
+# languages.yaml — Authoritative language / framework / Docker image list for repogen
+#
+# Add new stacks here. repogen will generate combinations from this file.
+# Each entry under 'languages' may have multiple frameworks.
+# If no framework is listed, the language name is used as the framework key.
+#
+# Fields:
+#   builder_image  — Docker image used for build stage
+#   runtime_image  — Docker image used for final runtime stage (multi-stage builds)
+#                    Set to same as builder_image for interpreted languages
+#   internal_port  — Port the service listens on inside the container
+#   start_period   — Seconds to wait before health probe (slow starters need more time)
+#   template       — Template directory under templates/ (optional; agent used if absent)
+
+languages:
+  python:
+    frameworks:
+      fastapi:
+        builder_image: python:3.11-slim
+        runtime_image: python:3.11-slim
+        internal_port: 8000
+        start_period: 15
+        template: python-fastapi
+      flask:
+        builder_image: python:3.11-slim
+        runtime_image: python:3.11-slim
+        internal_port: 5000
+        start_period: 15
+        template: python-flask
+      django:
+        builder_image: python:3.11-slim
+        runtime_image: python:3.11-slim
+        internal_port: 8000
+        start_period: 20
+
+  typescript:
+    frameworks:
+      express:
+        builder_image: node:20-alpine
+        runtime_image: node:20-alpine
+        internal_port: 3000
+        start_period: 15
+        template: ts-express
+      nestjs:
+        builder_image: node:20-alpine
+        runtime_image: node:20-alpine
+        internal_port: 3000
+        start_period: 20
+      feather:
+        builder_image: node:20-alpine
+        runtime_image: node:20-alpine
+        internal_port: 3000
+        start_period: 15
+      adonis:
+        builder_image: node:20-alpine
+        runtime_image: node:20-alpine
+        internal_port: 3333
+        start_period: 20
+
+  javascript:
+    frameworks:
+      express:
+        builder_image: node:20-alpine
+        runtime_image: node:20-alpine
+        internal_port: 3000
+        start_period: 15
+        template: js-express
+
+  bun:
+    frameworks:
+      express:
+        builder_image: oven/bun:latest
+        runtime_image: oven/bun:latest
+        internal_port: 3000
+        start_period: 15
+
+  go:
+    frameworks:
+      gin:
+        builder_image: golang:1.23-alpine
+        runtime_image: alpine:3.20
+        internal_port: 8080
+        start_period: 10
+        template: go-gin
+
+  rust:
+    frameworks:
+      axum:
+        builder_image: rust:1.88-slim
+        runtime_image: debian:bookworm-slim
+        internal_port: 8080
+        start_period: 10
+        template: rust-axum
+
+  java:
+    frameworks:
+      spring:
+        builder_image: gradle:8-jdk21
+        runtime_image: eclipse-temurin:21-jre
+        internal_port: 8080
+        start_period: 45
+        template: java-spring
+
+  kotlin:
+    frameworks:
+      ktor:
+        builder_image: gradle:8-jdk17
+        runtime_image: eclipse-temurin:17-jre
+        internal_port: 8080
+        start_period: 45
+        template: kotlin-ktor
+
+  ruby:
+    frameworks:
+      rails:
+        builder_image: ruby:3.3-slim
+        runtime_image: ruby:3.3-slim
+        internal_port: 3000
+        start_period: 40
+
+  csharp:
+    frameworks:
+      aspnet:
+        builder_image: mcr.microsoft.com/dotnet/sdk:8.0
+        runtime_image: mcr.microsoft.com/dotnet/aspnet:8.0
+        internal_port: 8080
+        start_period: 20
+        template: csharp-aspnet
+
+  cpp:
+    frameworks:
+      crow:
+        builder_image: gcc:13
+        runtime_image: debian:bookworm-slim
+        internal_port: 8080
+        start_period: 10
+
+# ── Optional service dependencies ──────────────────────────────────────────────
+# These are added to docker-compose.yml when a spec requests them.
+# Use official images and known-good healthcheck commands.
+
+dependencies:
+  postgres:
+    image: postgres:16-alpine
+    env:
+      POSTGRES_DB: appdb
+      POSTGRES_USER: appuser
+      POSTGRES_PASSWORD: apppassword
+    healthcheck: ["CMD-SHELL", "pg_isready -U appuser -d appdb"]
+    port: 5432
+
+  mysql:
+    image: mysql:8
+    env:
+      MYSQL_DATABASE: appdb
+      MYSQL_USER: appuser
+      MYSQL_PASSWORD: apppassword
+      MYSQL_ROOT_PASSWORD: rootpassword
+    healthcheck: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+    port: 3306
+
+  mongodb:
+    image: mongo:7
+    env: {}
+    healthcheck: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+    port: 27017
+
+  redis:
+    image: redis:7-alpine
+    env: {}
+    healthcheck: ["CMD", "redis-cli", "ping"]
+    port: 6379
+
+  kafka:
+    image: confluentinc/cp-kafka:7.6
+    env:
+      KAFKA_BROKER_ID: "1"
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: "1"
+    healthcheck: ["CMD", "kafka-topics", "--bootstrap-server", "localhost:9092", "--list"]
+    port: 9092
+
+  rabbitmq:
+    image: rabbitmq:3-management-alpine
+    env:
+      RABBITMQ_DEFAULT_USER: guest
+      RABBITMQ_DEFAULT_PASS: guest
+    healthcheck: ["CMD", "rabbitmq-diagnostics", "check_port_connectivity"]
+    port: 5672
