@@ -2,8 +2,10 @@
 # verify.sh — Build and smoke-test a generated repository
 #
 # Usage:
-#   scripts/verify.sh generated/<repo-name> <port>          # single repo
-#   STARTUP_WAIT=45 scripts/verify.sh generated/<repo> 8080 # custom wait time
+#   scripts/verify.sh [--verbose] generated/<repo-name> <port>
+#   STARTUP_WAIT=45 scripts/verify.sh [--verbose] generated/<repo> 8080
+#
+#   --verbose / -v  Show each HTTP request and full response during verification.
 #
 # For CRUD repos (spec=crud), all 6 endpoints are tested:
 #   GET  /health        → 200 {"status":"ok"}
@@ -22,9 +24,60 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 STARTUP_WAIT="${STARTUP_WAIT:-30}"
+VERBOSE=0
 
 pass() { echo "  PASS $*"; }
 fail() { echo "  FAIL $*" >&2; }
+
+# ── HTTP helpers ──────────────────────────────────────────────────────────────
+#
+# do_request METHOD URL [BODY]
+#   Prints response body to stdout.
+#   Exits non-zero when the server returns 4xx/5xx (mimics curl -f).
+#   In verbose mode, also prints the request and response to stderr.
+do_request() {
+  local method="$1" url="$2" body="${3:-}"
+  local tmpbody tmpcode
+  tmpbody=$(mktemp)
+  tmpcode=$(mktemp)
+
+  local curl_args=(-s -o "$tmpbody" -w "%{http_code}" -X "$method")
+  [[ -n "$body" ]] && curl_args+=(-H "Content-Type: application/json" -d "$body")
+
+  curl "${curl_args[@]}" "$url" > "$tmpcode" 2>/dev/null
+  local http_code
+  http_code=$(cat "$tmpcode")
+
+  if [[ $VERBOSE -eq 1 ]]; then
+    echo "" >&2
+    printf "  >> %s %s\n" "$method" "$url" >&2
+    [[ -n "$body" ]] && printf "     body: %s\n" "$body" >&2
+    printf "  << HTTP %s\n" "$http_code" >&2
+    if [[ -s "$tmpbody" ]]; then
+      jq . "$tmpbody" 2>/dev/null | sed 's/^/     /' >&2 \
+        || sed 's/^/     /' "$tmpbody" >&2
+    fi
+  fi
+
+  cat "$tmpbody"
+  rm -f "$tmpbody" "$tmpcode"
+  [[ "$http_code" =~ ^[23] ]]
+}
+
+# do_request_status METHOD URL
+#   Prints just the HTTP status code to stdout.
+#   In verbose mode, also logs request/status to stderr.
+do_request_status() {
+  local method="$1" url="$2"
+  local code
+  code=$(curl -s -o /dev/null -w "%{http_code}" -X "$method" "$url" 2>/dev/null)
+  if [[ $VERBOSE -eq 1 ]]; then
+    printf "\n  >> %s %s\n  << HTTP %s\n" "$method" "$url" "$code" >&2
+  fi
+  echo "$code"
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
 
 verify_repo() {
   local path="$1"
@@ -58,7 +111,7 @@ verify_repo() {
   local failed=0
 
   # 1. Health check (required for all repo types)
-  if curl -sf "$base/health" | grep -q '"ok"'; then
+  if do_request GET "$base/health" | grep -q '"ok"'; then
     pass "GET /health"
   else
     fail "GET /health"
@@ -67,16 +120,14 @@ verify_repo() {
 
   # 2-6. CRUD endpoints (only if /items route exists)
   local has_crud=0
-  if curl -so /dev/null -w "%{http_code}" -X GET "$base/items" 2>/dev/null | grep -qE "^(200|404)$"; then
+  if do_request_status GET "$base/items" | grep -qE "^(200|404)$"; then
     has_crud=1
   fi
 
   if [[ $has_crud -eq 1 ]]; then
     # Create item
     local item_json
-    item_json=$(curl -sf -X POST "$base/items" \
-      -H "Content-Type: application/json" \
-      -d '{"name":"test-item","description":"hello world"}' 2>/dev/null || echo "")
+    item_json=$(do_request POST "$base/items" '{"name":"test-item","description":"hello world"}' || echo "")
     if [[ -n "$item_json" ]]; then
       pass "POST /items"
     else
@@ -89,7 +140,7 @@ verify_repo() {
 
     if [[ -n "$item_id" ]]; then
       # List items
-      if curl -sf "$base/items" | jq -e '. | length > 0' >/dev/null 2>&1; then
+      if do_request GET "$base/items" | jq -e '. | length > 0' >/dev/null 2>&1; then
         pass "GET /items"
       else
         fail "GET /items"
@@ -97,7 +148,7 @@ verify_repo() {
       fi
 
       # Get one
-      if curl -sf "$base/items/$item_id" | jq -e '.id' >/dev/null 2>&1; then
+      if do_request GET "$base/items/$item_id" | jq -e '.id' >/dev/null 2>&1; then
         pass "GET /items/$item_id"
       else
         fail "GET /items/$item_id"
@@ -105,9 +156,7 @@ verify_repo() {
       fi
 
       # Update
-      if curl -sf -X PUT "$base/items/$item_id" \
-          -H "Content-Type: application/json" \
-          -d '{"name":"updated-item","description":"updated"}' | jq -e '.id' >/dev/null 2>&1; then
+      if do_request PUT "$base/items/$item_id" '{"name":"updated-item","description":"updated"}' | jq -e '.id' >/dev/null 2>&1; then
         pass "PUT /items/$item_id"
       else
         fail "PUT /items/$item_id"
@@ -116,7 +165,7 @@ verify_repo() {
 
       # Delete
       local delete_status
-      delete_status=$(curl -so /dev/null -w "%{http_code}" -X DELETE "$base/items/$item_id" 2>/dev/null || echo "000")
+      delete_status=$(do_request_status DELETE "$base/items/$item_id" || echo "000")
       if [[ "$delete_status" == "204" || "$delete_status" == "200" ]]; then
         pass "DELETE /items/$item_id → $delete_status"
       else
@@ -138,9 +187,15 @@ verify_repo() {
   fi
 }
 
+# ── Argument parsing ──────────────────────────────────────────────────────────
+while [[ "${1:-}" == --verbose || "${1:-}" == -v ]]; do
+  VERBOSE=1; shift
+done
+
 if [[ -z "${1:-}" || -z "${2:-}" ]]; then
-  echo "Usage: $0 <path-to-repo> <host-port>"
+  echo "Usage: $0 [--verbose] <path-to-repo> <host-port>"
   echo "Example: $0 generated/crud-python-fastapi 8001"
+  echo "         $0 --verbose generated/health-go-gin 8002"
   exit 1
 fi
 

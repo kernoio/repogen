@@ -32,3 +32,6 @@ gaps.md
 
 # Logs
 *.log
+
+generated/**
+Repo-specs/**
