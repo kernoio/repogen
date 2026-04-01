@@ -2,7 +2,7 @@
 
 Generate synthetic benchmark repositories from a spec and a list of languages and frameworks. Every generated repo is Dockerized, verified to build and run, and pushed to a GitHub organisation.
 
-Built for teams that need curated, reproducible test datasets for agentic software systems — tools that are expected to work across many different languages, frameworks, and repo structures.
+RepoGen is built for teams that need curated, reproducible test datasets for agentic software systems. These are tools that are expected to work across many different languages, frameworks, and repo structures.
 
 ---
 

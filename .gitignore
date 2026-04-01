@@ -32,3 +32,5 @@ gaps.md
 
 # Logs
 *.log
+
+generated/*
