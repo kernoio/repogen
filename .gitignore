@@ -34,3 +34,4 @@ gaps.md
 *.log
 
 generated/**
+Repo-specs/**
