@@ -15,10 +15,11 @@ dependencies = [
     "jinja2>=3.1",
     "anthropic>=0.25",
     "tabulate>=0.9",
+    "python-dotenv>=1.0",
 ]
 
 [project.scripts]
-repogen = "repogen:cli"
+repogen = "repogen.cli:cli"
 
 [project.optional-dependencies]
 dev = [

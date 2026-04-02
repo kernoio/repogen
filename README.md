@@ -1,64 +1,100 @@
 # repogen
 
-Generate synthetic benchmark repositories from a spec and a list of languages and frameworks. Every generated repo is Dockerized, verified to build and run, and pushed to a GitHub organisation.
+Generate synthetic benchmark repositories from a spec and a list of languages and frameworks. Every generated repo is Dockerized, verified to build and run, and ready to push to a GitHub organisation.
 
-Built for teams that need curated, reproducible test datasets for agentic software systems — tools that are expected to work across many different languages, frameworks, and repo structures.
+repogen is built for teams that need curated, reproducible test datasets for agentic software systems — tools that are expected to work across many different languages, frameworks, and repo structures.
 
 ---
 
-## Two ways to use repogen
+## Commands at a glance
+
+| Command | What it does |
+|---|---|
+| `repogen init` | Read a spec + language list, plan all combinations, write `matrix.yaml` |
+| `repogen generate` | Generate repos from `matrix.yaml` (templates where available, Claude API otherwise) |
+| `repogen verify` | Build and probe a repo — by path, by name, or all unverified in matrix.yaml |
+| `repogen fix_loop` | Verify a single repo; on failure send diagnostics to Claude to fix it and retry |
+| `repogen from_spec` | Generate a repo from a `Repo-specs/` architecture document, then verify it |
+| `repogen endpoints` | Count applications and HTTP endpoints in a repo; write results to `endpoints.yaml` |
+| `repogen coverage` | Report language/framework/size coverage and write `gaps.md` |
+| `repogen push` | Push verified repos to a GitHub org |
+| `repogen status` | Show the generation and verification state of every repo |
+
+---
+
+## Ways to use repogen
 
 ### Mode 1 — CLI (automated, batch)
 
 For generating large numbers of repos without manual intervention. Point it at a spec file and a language list; it plans the combinations, generates the repos (using Jinja2 templates where available, calling the Claude API for anything novel), verifies each one with Docker, and pushes verified repos to your GitHub org.
 
 ```bash
-pip install repogen
+git clone https://github.com/kernoio/repogen && cd repogen
+python3 -m venv .venv && source .venv/bin/activate && pip install -e .
 
 # Generate all combinations from a spec
-repogen generate --spec specs/crud.md --langs languages.yaml --org my-org
-
-# Check what was built and what's missing
-repogen coverage
-
-# Push verified repos
+repogen init --spec specs/crud.md --langs languages.yaml
+repogen generate
+repogen verify
 repogen push --org my-org
 ```
 
-Best for: well-understood patterns at scale. All 16 language/framework combinations in this repo's default `languages.yaml` have templates — no API key needed for those. Novel stacks and edge cases require `ANTHROPIC_API_KEY`.
+Best for: well-understood patterns at scale. All language/framework combinations in `languages.yaml` that have a template need no API key. Novel stacks require `ANTHROPIC_API_KEY`.
 
 ---
 
-### Mode 2 — IDE-native (interactive, agent-driven)
+### Mode 2 — From a Repo-spec (single real-codebase target)
 
-For complex repos, novel patterns, or edge cases that need human judgement. Open this project in VS Code, Cursor, or any IDE with Claude Code or a similar agent. The `CLAUDE.md` file gives the agent all the context it needs — conventions, Docker patterns, fix history, verification protocol — so you can start generating immediately.
+For generating a benchmark repo that faithfully mirrors the stack of a specific real codebase. Write (or generate) a `Repo-specs/` document describing the target's language, framework, ORM, patterns, and folder layout, then run:
+
+```bash
+repogen from_spec Repo-specs/example_spec.md
+```
+
+repogen sends the spec to Claude, which produces a minimal CRUD service using the exact stack and idioms described. `fix_loop` then verifies it and self-repairs any build or runtime failures automatically.
+
+The spec doesn't need to be exhaustive before you generate. A working starting point will come back from even a partial spec, and you can open the result in your IDE and co-edit with the agent to refine patterns, fill gaps, or adjust structure. See [Writing a Repo-spec](#writing-a-repo-spec) for guidance on what to include.
+
+To double-check the endpoints, use
+```bash
+repogen verify generated/example_spec <port>
+```
+Check the correct `<port>` from `docker-compose.yml` in the generated repo.
+Note that `fix_loop` will also need this port.
+
+---
+
+### Mode 3 — IDE-native (interactive, agent-driven)
+
+For complex repos, novel patterns, or edge cases that need human judgement. Open this project in VS Code, Cursor, or any IDE with Claude Code. The `CLAUDE.md` file gives the agent all the context it needs — conventions, Docker patterns, fix history, verification protocol — so you can start generating immediately.
 
 ```
-# In your IDE terminal:
 git clone https://github.com/kernoio/repogen
-code repogen          # opens in VS Code with Claude Code
+code repogen
 
-# Then just talk to the agent:
+# Then talk to the agent:
 # "Generate a Rust Axum repo with a Redis cache dependency"
 # "Create an edge case: a Python repo with a broken Dockerfile"
 # "Add Elixir/Phoenix to languages.yaml and generate the first repo"
 ```
 
+This mode is also the natural next step after `repogen from_spec`: once the auto-generated repo builds and passes verification, open it in your IDE to co-write any structural refinements, swap out patterns, or add features that weren't in the spec. The agent reads both `CLAUDE.md` and the generated files, so it can continue from where `from_spec` left off without re-explaining the context.
+
 Best for: repos that require structural decisions, edge cases where incorrectness is intentional, or prototyping new language/framework support before adding it to the template library.
 
 ---
 
-### Mode 3 — Hybrid (recommended)
+### Mode 4 — Hybrid (recommended)
 
-Both modes share the same `languages.yaml`, `progress.yaml`, and `templates/` directory. Work done interactively compounds into the automated pipeline:
+Both the CLI and IDE modes share the same `languages.yaml`, `progress.yaml`, and `templates/` directory. Work done interactively compounds into the automated pipeline:
 
 1. Build a complex repo interactively in your IDE
 2. Commit the working source as a template
-3. Future `repogen generate` runs pick it up automatically
+3. Future `repogen generate` runs pick it up automatically — no API call needed
 
 ---
 
-### Mode 4 — Claude Code CLI (headless agent)
+### Mode 5 — Claude Code CLI (headless agent)
 
 For teams already using Claude Code as a development tool, repogen can be driven entirely from the Claude Code CLI (`claude`) without opening an IDE. Clone the repo and run Claude Code in print mode to generate individual repos non-interactively, or use it as a scriptable step in a CI pipeline.
 
@@ -80,15 +116,12 @@ Because `CLAUDE.md` is present, Claude Code reads all conventions, fix patterns,
 **Using Claude Code CLI in a generation loop:**
 
 ```bash
-# Loop over pending repos from matrix.yaml and generate each one
 for repo in $(python3 scripts/progress.py pending); do
   claude --print "Read CLAUDE.md. Generate $repo in generated/$repo following all conventions."
   scripts/verify.sh generated/$repo <port>
   python3 scripts/progress.py set $repo done --verified
 done
 ```
-
-This is the lightest-weight path to full automation: no API key management in your own code, no SDK integration — just the Claude Code CLI reading the same `CLAUDE.md` context that powers the interactive IDE session.
 
 **Requires:** Claude Code CLI installed (`npm install -g @anthropic-ai/claude-code`) and authenticated.
 
@@ -97,19 +130,22 @@ This is the lightest-weight path to full automation: no API key management in yo
 ## Installation
 
 ```bash
-pip install repogen
-
-# Or from source:
 git clone https://github.com/kernoio/repogen
 cd repogen
+python3 -m venv .venv && source .venv/bin/activate
 pip install -e .
+cp env.example .env   # then fill in your API keys
 ```
+
+A virtual environment is recommended — there is an unrelated package also named `repogen` on PyPI that will be picked up if you install into a shared environment.
+
+`repogen.py` is a thin shim that can be run directly without installing the package (`python3 repogen.py <command>`) — useful if you prefer not to use a venv.
 
 **Prerequisites:**
 - Python 3.11+
 - Docker and Docker Compose
 - `gh` CLI (for pushing to GitHub: `brew install gh && gh auth login`)
-- `ANTHROPIC_API_KEY` environment variable (for agent-based generation only)
+- `ANTHROPIC_API_KEY` environment variable (for agent-based generation, `fix_loop`, and `from_spec`)
 
 ---
 
@@ -117,12 +153,13 @@ pip install -e .
 
 ```bash
 # 1. Install
-pip install repogen
+git clone https://github.com/kernoio/repogen && cd repogen
+python3 -m venv .venv && source .venv/bin/activate && pip install -e .
 
 # 2. Initialise a project from the built-in CRUD spec
-repogen init --spec specs/crud.md --langs languages.yaml --output my-dataset
+repogen init --spec specs/crud.md --langs languages.yaml
 
-# 3. Generate repos (uses templates for known stacks, Claude API for unknown)
+# 3. Generate repos
 repogen generate
 
 # 4. Verify all generated repos
@@ -141,7 +178,7 @@ repogen push --org my-github-org
 
 ### `repogen init`
 
-Reads a spec file and a language list, plans all combinations, and writes a `matrix.yaml`.
+Reads a spec file and a language list, plans all combinations, and writes `matrix.yaml`.
 
 ```
 repogen init --spec <spec> --langs <langs> [--output <dir>]
@@ -154,7 +191,7 @@ Options:
 
 ### `repogen generate`
 
-Generates repos from `matrix.yaml`. Uses Jinja2 templates where available; calls Claude API for novel stacks.
+Generates repos from `matrix.yaml`. Uses Jinja2 templates where available; calls the Claude API for novel stacks.
 
 ```
 repogen generate [--name <repo>] [--model <model>] [--force]
@@ -167,14 +204,144 @@ Options:
 
 ### `repogen verify`
 
-Runs `docker compose build`, starts services, and probes endpoints. Records result in `progress.yaml`.
+Builds and probes a repo with Docker Compose. Captures build output, container logs, health probe, and full CRUD suite. Records result in `progress.yaml`.
+
+Can be called in three ways:
 
 ```
-repogen verify [--name <repo>] [--wait <seconds>]
+repogen verify [<repo-path> [port]]
+
+Arguments:
+  repo-path   Path to a repo directory (for repos not in matrix.yaml)
+  port        Host port (auto-read from matrix.yaml if omitted)
 
 Options:
-  --name      Verify only this repo (default: all unverified)
-  --wait      Seconds to wait for startup                [default: 30]
+  --name        Verify a specific repo by name (port read from matrix.yaml)
+  --wait        Seconds to wait for startup                [default: 30]
+  --verbose, -v Show each HTTP probe request and response
+```
+
+```bash
+# Direct path — works for any repo, including from_spec output
+repogen verify generated/example_repo 8001
+
+# Port auto-detected from matrix.yaml
+repogen verify generated/example_repo
+
+# By name
+repogen verify --name crud-python-fastapi
+
+# All unverified repos in matrix.yaml
+repogen verify
+```
+
+### `repogen fix_loop`
+
+Verifies a single repo with a full build → start → probe cycle. On failure, sends the complete diagnostics (build output, container logs, endpoint probe results) and all current repo files to Claude, applies the returned fix, and re-verifies. Repeats up to `--max-retries` times.
+
+```
+repogen fix_loop <repo-path> [port]
+
+Arguments:
+  repo-path   Path to the generated repo directory      [required]
+  port        Host port (auto-read from matrix.yaml if omitted)
+
+Options:
+  --max-retries   Fix attempts before giving up          [default: 3]
+  --model         Claude model                           [default: claude-sonnet-4-6]
+  --wait          Seconds to wait for service startup    [default: 30]
+  --verbose, -v   Show each HTTP probe request and response
+```
+
+```bash
+repogen fix_loop generated/example_repo 8001
+repogen fix_loop generated/crud-python-fastapi        # port auto-read from matrix.yaml
+repogen fix_loop generated/sfr-go-gin 8003 --verbose --max-retries 5
+```
+
+### `repogen from_spec`
+
+Generates a benchmark repo from a `Repo-specs/` architecture document. Calls Claude with the spec, the CRUD endpoint contract, and all Docker conventions from `CLAUDE.md`, then hands the result to `fix_loop` for verification and self-repair.
+
+```
+repogen from_spec <spec-path>
+
+Arguments:
+  spec-path   Path to a Repo-spec .md file              [required]
+
+Options:
+  --output        Parent directory for generated repos   [default: generated/]
+  --name          Repo directory name                    [default: spec filename stem]
+  --port          Host port                              [default: next free port from 8000]
+  --model         Claude model                           [default: claude-sonnet-4-6]
+  --no-fix        Write files and exit, skip verification
+  --max-retries   fix_loop retry cycles                  [default: 3]
+  --wait          Startup wait in seconds                [default: 30]
+```
+
+```bash
+repogen from_spec Repo-specs/example_repo.md
+repogen from_spec Repo-specs/example_repo.md --port 8005
+repogen from_spec Repo-specs/example_repo.md --name example_repo-v2 --no-fix
+repogen from_spec Repo-specs/example_repo.md --max-retries 5 --wait 45
+```
+
+### `repogen endpoints`
+
+Counts the number of application services and HTTP endpoints in a generated repo. Applications are counted by parsing `docker-compose.yml` (infrastructure services like Postgres and Redis are excluded). Endpoints are counted by sending all source files to Claude and asking it to enumerate every route. Results are written to `endpoints.yaml` inside the repo directory.
+
+```
+repogen endpoints [<repo-path>]
+
+Arguments:
+  repo-path   Path to a repo directory
+
+Options:
+  --name TEXT    Analyse a repo by name (path read from matrix.yaml)
+  --all          Analyse all verified repos in matrix.yaml
+  --model TEXT   Claude model for endpoint analysis     [default: claude-sonnet-4-6]
+  --output TEXT  Write combined results to this file    [default: <repo>/endpoints.yaml]
+```
+
+```bash
+repogen endpoints generated/seapoint
+repogen endpoints --name crud-python-fastapi
+repogen endpoints --all
+repogen endpoints --all --output results/endpoints.yaml
+```
+
+Example `endpoints.yaml` output:
+
+```yaml
+repo: seapoint
+analysed_at: 2026-04-02T10:00:00+00:00
+applications:
+  count: 1
+  services:
+    - name: app
+      image: (build)
+      ports: ['8001']
+endpoints:
+  count: 6
+  routes:
+    - method: GET
+      path: /health
+      description: Returns {"status":"ok"} to confirm the service is running.
+    - method: POST
+      path: /items
+      description: Creates a new item and returns it with HTTP 201.
+    - method: GET
+      path: /items
+      description: Returns all items as a list.
+    - method: GET
+      path: /items/:id
+      description: Returns a single item by ID, or 404 if not found.
+    - method: PUT
+      path: /items/:id
+      description: Updates an existing item by ID.
+    - method: DELETE
+      path: /items/:id
+      description: Deletes an item by ID and returns HTTP 204.
 ```
 
 ### `repogen coverage`
@@ -193,7 +360,7 @@ Options:
 Pushes verified repos to a GitHub org. Initialises git, creates the remote repo, and pushes.
 
 ```
-repogen push [--org <org>] [--name <repo>] [--private]
+repogen push --org <org> [--name <repo>] [--private]
 
 Options:
   --org       GitHub org or username                    [required]
@@ -211,16 +378,102 @@ repogen status
 
 ---
 
+## Writing a Repo-spec
+
+A Repo-spec is a markdown document in `Repo-specs/` that describes a real codebase in enough detail for Claude to produce a faithful minimal replica. It is the input to `repogen from_spec`.
+
+The goal is not a complete audit of the codebase. It is a targeted description of the parts that matter for generating a working CRUD benchmark: the stack, the idioms, and exactly what a minimal service built in that style looks like.
+
+**You don't need to complete the spec before generating.** `repogen from_spec` will produce a working starting point from even a partial document. Once the repo builds and passes verification, open it in your IDE and use the agent to co-write the refinements — adjusting patterns, filling structural gaps, or making the generated code closer to the real codebase's style. A spec is a brief, not a contract.
+
+---
+
+### Sections that matter most
+
+**Stack summary**
+
+A short table of the key technology choices. Language, runtime, and version; web framework (and any decorator/routing libraries on top); ORM name, version, and style (active-record vs data-mapper); database engine and migration tooling.
+
+Auth, background jobs, and observability are worth a single line each so Claude knows what to strip.
+
+**REST surface**
+
+How the framework routes requests and shapes responses:
+
+- How controllers are declared — class-based with decorators, plain functions, etc.
+- How path params, query params, and request bodies are extracted
+- What a success response looks like end-to-end: does the handler return directly, or is there a terminal responder/interceptor?
+- What an error response looks like — global error handler, middleware, HTTP status mapping
+
+This tells Claude how to write the controller and wire up the error handler. Without it, you'll often get a structurally correct but idiomatically wrong result.
+
+**Items-shaped mapping**
+
+Describe explicitly how a generic `Item { id, name, description, created_at }` entity maps onto this codebase's patterns:
+
+- What base class or mixins the entity would extend
+- What the primary key looks like — auto-increment int, UUID, prefixed TypeID, etc.
+- Whether timestamps come from the ORM or application code
+- Which fields carry which decorators or validators
+
+This is the section most likely to determine whether the generated entity code is actually idiomatic.
+
+**Folder architecture**
+
+The directory tree, with a one-line label per folder. Include only the server-side layout. The entry-point file path is the most important single line.
+
+**Docker and orchestration**
+
+How the Dockerfile is structured (single-stage vs multi-stage, base image), what compose services exist, the healthcheck approach, and any startup sequencing — e.g. run migrations before the server starts. This section maps directly onto `Dockerfile` and `docker-compose.yml`.
+
+**Gaps analysis**
+
+What you would strip from the full codebase to reach a minimal benchmark: auth middleware, background job systems, observability stacks, adapter layers, client SPAs. Being explicit here prevents Claude from including things it doesn't need and keeps the generated repo minimal.
+
+---
+
+### The generation hint (highest-value section)
+
+End the spec with a section called `Example-project generation hint` or similar. Write it as a direct prose brief — as if you're describing the service to a developer who will build it from scratch. Mention:
+
+- Language, runtime, and framework versions
+- Routing and controller approach
+- ORM and migration strategy
+- Database compose pattern
+- Dockerfile structure (multi-stage, base image, exposed port)
+- Startup sequencing (migrate on start, etc.)
+- Folder layout for the generated repo
+
+This section is used verbatim as part of the generation prompt. The more concrete and specific it is, the more closely the output will match the target codebase's style, and the fewer `fix_loop` cycles will be needed. Code snippets alongside this section — paraphrased examples of the controller pattern, entity definition, and health endpoint — are not required but typically eliminate one or two repair cycles.
+
+---
+
+### Example spec structure
+
+```
+Repo-specs/MyApp.md
+├── 1. Stack summary              ← table: language, framework, ORM, DB, auth, jobs
+├── 2. REST surface               ← routing, parameter binding, response/error shape
+├── 3. Items-shaped mapping       ← how Item entity looks in this codebase's style
+├── 4. Design patterns            ← layering, DI, DTOs, transactions, middleware order
+├── 5. Folder architecture        ← directory tree with labels; highlight entry point
+├── 6. Database                   ← engine, driver, ORM, migrations, ID strategy
+├── 7. Docker and orchestration   ← Dockerfile structure, compose services, healthcheck
+├── 8. Gaps analysis              ← what to strip for the benchmark
+├── 9. Code snippets              ← (optional) paraphrased controller, entity, health
+└── 10. Example-project generation hint  ← direct build brief (most important)
+```
+
+---
+
 ## Spec files
 
-A spec is a plain markdown or YAML file describing the type of repos to generate.
-
-**Markdown spec (natural language):**
+A spec (`specs/`) describes what endpoints and behaviour every generated repo must implement, independent of language or framework.
 
 ```markdown
 # CRUD API spec
 
-Each repository should implement a minimal CRUD REST API for an `Item` entity
+Each repository implements a minimal CRUD REST API for an Item entity
 (id, name, description, created_at) backed by Postgres.
 
 Required endpoints:
@@ -230,9 +483,6 @@ Required endpoints:
 - GET  /items/:id    → 200 or 404
 - PUT  /items/:id    → 200 or 404
 - DELETE /items/:id  → 204 or 404
-
-Every service must be Dockerized with a docker-compose.yml that includes
-a Postgres dependency with a healthcheck.
 ```
 
 See `specs/` for examples: `healthcheck.md`, `crud.md`, `edge-cases.md`.
@@ -241,7 +491,7 @@ See `specs/` for examples: `healthcheck.md`, `crud.md`, `edge-cases.md`.
 
 ## languages.yaml
 
-Defines every supported language, its frameworks, Docker base images, internal port, and start period. Drives both the template path and the agent prompt.
+Defines every supported language, its frameworks, Docker base images, internal port, and start period.
 
 ```yaml
 languages:
@@ -250,35 +500,21 @@ languages:
       - name: fastapi
         template: python-fastapi
       - name: django
-        template: python-django
       - name: flask
         template: python-flask
     builder_image: python:3.11-slim
     runtime_image: python:3.11-slim
     default_internal_port: 8000
     healthcheck_start_period: 30
-
-  - name: typescript
-    frameworks:
-      - name: express
-        template: ts-express
-      - name: nestjs
-        template: ts-nestjs
-      - name: feather
-        template: ts-feather
-      - name: adonis
-        template: ts-adonis
-    builder_image: node:20-alpine
-    runtime_image: node:20-alpine
-    default_internal_port: 3000
-    healthcheck_start_period: 30
 ```
+
+If a `template` key is present, `repogen generate` renders the Jinja2 template and makes no API call. If absent, the Claude agent path is used.
 
 ---
 
 ## Examples
 
-The `examples/` directory contains two pre-built, verified repos that serve as concrete reference for the agent in IDE-native and Claude Code CLI modes:
+The `examples/` directory contains pre-built, verified repos that serve as concrete reference for the agent in IDE-native and Claude Code CLI modes:
 
 | Repo | Stack | Pattern |
 |------|-------|---------|
@@ -290,7 +526,6 @@ These are real repos from the generated dataset — built, verified, and committ
 To add more examples (recommended for new language families):
 
 ```bash
-# After verifying a new repo, copy it to examples/
 cp -r generated/crud-ruby-rails examples/crud-ruby-rails
 git add examples/crud-ruby-rails
 git commit -m "examples: add Ruby/Rails reference"
@@ -303,6 +538,7 @@ git commit -m "examples: add Ruby/Rails reference"
 Templates live in `templates/<name>/` and contain the complete file tree for a single-service repo. Files ending in `.j2` are rendered with Jinja2; all other files are copied as-is.
 
 **Template variables:**
+
 | Variable | Example |
 |---|---|
 | `{{ repo_name }}` | `crud-python-fastapi` |
@@ -312,7 +548,7 @@ Templates live in `templates/<name>/` and contain the complete file tree for a s
 | `{{ internal_port }}` | `8000` |
 | `{{ orm }}` | `sqlalchemy` |
 
-To add a new template, create `templates/<name>/` and add it to `languages.yaml`.
+To add a new template, create `templates/<name>/` and add the `template` key to `languages.yaml`.
 
 ---
 
@@ -336,41 +572,67 @@ For interactive use, open this project in your IDE and the agent will read `CLAU
 repogen generate
 │
 ├── For each combination in matrix.yaml:
+│   ├── Template exists? ──── YES ──→ Render Jinja2 template → write to generated/<name>/
+│   └── No template ─────── NO ───→ Call Claude API → agent writes all files
 │
-│   ├── Template exists? ──── YES ──→ Render Jinja2 template
-│   │                                     └── Write files to generated/<name>/
-│   │
-│   └── No template ─────── NO ───→ Call Claude API
-│                                       └── Agent writes all files
+repogen verify  /  repogen fix_loop
 │
-├── repogen verify
-│   ├── docker compose build
-│   ├── docker compose up -d
-│   ├── wait for startup
-│   ├── probe endpoints (GET /health, CRUD endpoints per spec)
-│   └── if fail → call Claude API with error → apply patch → retry (up to 3x)
+├── docker compose build          (capture output on failure)
+├── docker compose up -d
+├── wait for startup
+├── docker compose logs           (always captured)
+├── probe GET /health
+├── probe CRUD endpoints          (if /items route exists)
+└── on failure → send diagnostics + all repo files to Claude
+                → apply returned fix → retry (up to --max-retries)
+
+repogen from_spec
 │
-└── repogen push
-    ├── git init + commit
-    ├── gh repo create <org>/<name>
-    └── git push
+├── Send Repo-spec + CRUD contract + CLAUDE.md conventions to Claude
+├── Write returned {filename: content} to generated/<name>/
+└── Hand off to fix_loop for verification and self-repair
+    └── On pass: open in IDE for any structural refinements (optional)
 ```
 
 ---
 
 ## Known fix patterns
 
-When the agent-based path encounters a build failure, repogen passes the error to Claude for diagnosis. The following patterns are in the knowledge base from prior generation runs:
+When `fix_loop` encounters a build failure, it passes the full diagnostics to Claude for diagnosis. The following patterns are in the knowledge base from prior generation runs:
 
-| Stack | Known issue | Fix |
+| Stack | Symptom | Fix |
 |---|---|---|
-| Any / Alpine | Prisma requires `openssl` | Add `openssl` to `apk add` |
-| Go | `rogpeppe/go-internal` requires Go 1.23+ | Use `golang:1.23-alpine` |
-| Rust | `GLIBCXX_3.4.32` not in `debian:bookworm-slim` | Static link: `-static-libstdc++ -static-libgcc` |
+| Any / Alpine | Prisma: `libssl` not found | Add `openssl` to `apk add` |
+| Go | `rogpeppe/go-internal` build error | Use `golang:1.23-alpine` or later |
+| Rust | `GLIBCXX_3.4.32` not in `debian:bookworm-slim` | Add `-static-libstdc++ -static-libgcc` to RUSTFLAGS |
 | Ruby Rails | `rails db:migrate` shows help instead of running | Use `bundle exec rake db:migrate` |
-| Ruby Rails | `psych` gem fails to install | Add `libyaml-dev` to apt-get |
+| Ruby | `psych` gem fails to install | Add `libyaml-dev` to apt-get |
 | C++ Crow | `.deb` package is x86-only | Download `crow_all.h` header directly |
 | C++ Crow | `libboost-all-dev` fails on ARM64 | Use `libboost-system-dev` only |
+| Flask (CRUD) | Race condition with `db.create_all()` in multi-worker gunicorn | Use `--workers 1` |
+| AdonisJS | `Cannot find module` at runtime | Replace with Express + Knex |
+| node:20-alpine | `yarn: not found` | yarn is pre-installed — remove the `npm install -g yarn` line |
+
+---
+
+## Reproducing the paper experiments
+
+The `experiment-scripts/` directory contains a numbered pipeline that reproduces the results from the accompanying paper. Each script is self-contained and writes results to `reproduced-experiments/results/`.
+
+```bash
+python3 experiment-scripts/01_collect_build_metrics.py   # build + CRUD-test all repos
+python3 experiment-scripts/02_collect_repo_stats.py      # LOC + Docker image stats
+python3 experiment-scripts/03_classify_generation_method.py
+python3 experiment-scripts/04_run_pilot_identification.py  # Claude identifies stack from repo
+python3 experiment-scripts/05a_sample_real_repos.py --min-stars 5
+python3 experiment-scripts/05b_verify_real_repos.py \
+    --sample reproduced-experiments/results/real-repos-stars5.yaml \
+    --out    reproduced-experiments/results/real-verify-stars5.jsonl \
+    --clonedir /tmp/eval-crud-repos
+python3 experiment-scripts/06_generate_summary_tables.py  # → summary.md + summary.tex
+```
+
+See [experiment-scripts/README.md](experiment-scripts/README.md) for full documentation.
 
 ---
 
@@ -381,7 +643,7 @@ To add support for a new language or framework:
 1. Create a template in `templates/<name>/`
 2. Add the language/framework to `languages.yaml`
 3. Run `repogen generate --name <new-repo>` to test it
-4. Run `repogen verify --name <new-repo>` to confirm
+4. Run `repogen fix_loop generated/<new-repo>` to verify and self-repair
 5. Submit a PR
 
 For edge cases and experimental patterns, use IDE-native mode to prototype first, then commit the working files as a template.
@@ -393,7 +655,7 @@ For edge cases and experimental patterns, use IDE-native mode to prototype first
 repogen was built to support automated benchmarking of agentic software systems across diverse technology stacks. Modern software products are expected to work across many different languages and frameworks; agents make building cross-stack systems easier, but they must be tested on datasets that genuinely span that space.
 
 The dataset generated by repogen covers:
-- 11 languages, 16 language/framework combinations (single-service repos)
+- 11 languages, 16+ language/framework combinations (single-service repos)
 - Monorepos with 2–11 services in uniform and polyglot configurations
 - All 55 possible language pairs represented
 - Workspace detection examples (pnpm, yarn, Python uv)
