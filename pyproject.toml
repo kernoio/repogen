@@ -19,7 +19,7 @@ dependencies = [
 ]
 
 [project.scripts]
-repogen = "repogen:cli"
+repogen = "repogen.cli:cli"
 
 [project.optional-dependencies]
 dev = [

@@ -15,6 +15,7 @@ repogen is built for teams that need curated, reproducible test datasets for age
 | `repogen verify` | Build and probe a repo — by path, by name, or all unverified in matrix.yaml |
 | `repogen fix_loop` | Verify a single repo; on failure send diagnostics to Claude to fix it and retry |
 | `repogen from_spec` | Generate a repo from a `Repo-specs/` architecture document, then verify it |
+| `repogen endpoints` | Count applications and HTTP endpoints in a repo; write results to `endpoints.yaml` |
 | `repogen coverage` | Report language/framework/size coverage and write `gaps.md` |
 | `repogen push` | Push verified repos to a GitHub org |
 | `repogen status` | Show the generation and verification state of every repo |
@@ -56,9 +57,9 @@ The spec doesn't need to be exhaustive before you generate. A working starting p
 
 To double-check the endpoints, use
 ```bash
-repogen verify Repo-specs/example_spec.md <port>
+repogen verify generated/example_spec <port>
 ```
-Be sure to check the correct <port> from the `docker-compose.yaml` in the generated repo.
+Check the correct `<port>` from `docker-compose.yml` in the generated repo.
 Note that `fix_loop` will also need this port.
 
 ---
@@ -133,9 +134,12 @@ git clone https://github.com/kernoio/repogen
 cd repogen
 python3 -m venv .venv && source .venv/bin/activate
 pip install -e .
+cp env.example .env   # then fill in your API keys
 ```
 
 A virtual environment is recommended — there is an unrelated package also named `repogen` on PyPI that will be picked up if you install into a shared environment.
+
+`repogen.py` is a thin shim that can be run directly without installing the package (`python3 repogen.py <command>`) — useful if you prefer not to use a venv.
 
 **Prerequisites:**
 - Python 3.11+
@@ -280,6 +284,64 @@ repogen from_spec Repo-specs/example_repo.md
 repogen from_spec Repo-specs/example_repo.md --port 8005
 repogen from_spec Repo-specs/example_repo.md --name example_repo-v2 --no-fix
 repogen from_spec Repo-specs/example_repo.md --max-retries 5 --wait 45
+```
+
+### `repogen endpoints`
+
+Counts the number of application services and HTTP endpoints in a generated repo. Applications are counted by parsing `docker-compose.yml` (infrastructure services like Postgres and Redis are excluded). Endpoints are counted by sending all source files to Claude and asking it to enumerate every route. Results are written to `endpoints.yaml` inside the repo directory.
+
+```
+repogen endpoints [<repo-path>]
+
+Arguments:
+  repo-path   Path to a repo directory
+
+Options:
+  --name TEXT    Analyse a repo by name (path read from matrix.yaml)
+  --all          Analyse all verified repos in matrix.yaml
+  --model TEXT   Claude model for endpoint analysis     [default: claude-sonnet-4-6]
+  --output TEXT  Write combined results to this file    [default: <repo>/endpoints.yaml]
+```
+
+```bash
+repogen endpoints generated/seapoint
+repogen endpoints --name crud-python-fastapi
+repogen endpoints --all
+repogen endpoints --all --output results/endpoints.yaml
+```
+
+Example `endpoints.yaml` output:
+
+```yaml
+repo: seapoint
+analysed_at: 2026-04-02T10:00:00+00:00
+applications:
+  count: 1
+  services:
+    - name: app
+      image: (build)
+      ports: ['8001']
+endpoints:
+  count: 6
+  routes:
+    - method: GET
+      path: /health
+      description: Returns {"status":"ok"} to confirm the service is running.
+    - method: POST
+      path: /items
+      description: Creates a new item and returns it with HTTP 201.
+    - method: GET
+      path: /items
+      description: Returns all items as a list.
+    - method: GET
+      path: /items/:id
+      description: Returns a single item by ID, or 404 if not found.
+    - method: PUT
+      path: /items/:id
+      description: Updates an existing item by ID.
+    - method: DELETE
+      path: /items/:id
+      description: Deletes an item by ID and returns HTTP 204.
 ```
 
 ### `repogen coverage`
@@ -550,6 +612,27 @@ When `fix_loop` encounters a build failure, it passes the full diagnostics to Cl
 | Flask (CRUD) | Race condition with `db.create_all()` in multi-worker gunicorn | Use `--workers 1` |
 | AdonisJS | `Cannot find module` at runtime | Replace with Express + Knex |
 | node:20-alpine | `yarn: not found` | yarn is pre-installed — remove the `npm install -g yarn` line |
+
+---
+
+## Reproducing the paper experiments
+
+The `experiment-scripts/` directory contains a numbered pipeline that reproduces the results from the accompanying paper. Each script is self-contained and writes results to `reproduced-experiments/results/`.
+
+```bash
+python3 experiment-scripts/01_collect_build_metrics.py   # build + CRUD-test all repos
+python3 experiment-scripts/02_collect_repo_stats.py      # LOC + Docker image stats
+python3 experiment-scripts/03_classify_generation_method.py
+python3 experiment-scripts/04_run_pilot_identification.py  # Claude identifies stack from repo
+python3 experiment-scripts/05a_sample_real_repos.py --min-stars 5
+python3 experiment-scripts/05b_verify_real_repos.py \
+    --sample reproduced-experiments/results/real-repos-stars5.yaml \
+    --out    reproduced-experiments/results/real-verify-stars5.jsonl \
+    --clonedir /tmp/eval-crud-repos
+python3 experiment-scripts/06_generate_summary_tables.py  # → summary.md + summary.tex
+```
+
+See [experiment-scripts/README.md](experiment-scripts/README.md) for full documentation.
 
 ---
 

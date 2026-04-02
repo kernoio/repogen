@@ -35,3 +35,8 @@ gaps.md
 
 generated/**
 Repo-specs/**
+
+evaluation/**
+evaluation/
+reproduced-experiments/
+archived-repos/
