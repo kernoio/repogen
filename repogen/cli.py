@@ -16,6 +16,7 @@ import click
 import yaml
 
 from repogen.core import (
+    ROOT,
     GENERATED_DIR,
     MATRIX_PATH,
     find_free_port,
