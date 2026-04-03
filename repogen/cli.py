@@ -631,9 +631,17 @@ def push(repo_path, org, name, public):
                 sp.run(["git", "commit", "-m", f"Initial commit: {rname}"],
                        cwd=repo_path, check=True, capture_output=True)
 
-            sp.run(["gh", "repo", "create", f"{org}/{rname}", visibility,
-                    "--description", f"Synthetic benchmark repo: {rname}"],
-                   check=True, capture_output=True)
+            result = sp.run(["gh", "repo", "create", f"{org}/{rname}", visibility,
+                             "--description", f"Synthetic benchmark repo: {rname}"],
+                            capture_output=True, text=True)
+            if result.returncode != 0:
+                gh_err = (result.stderr or result.stdout).strip()
+                # Repo already exists — skip creation and continue to push
+                if "already exists" in gh_err:
+                    warn(f"  {rname}: repo already exists on GitHub, pushing to existing")
+                else:
+                    raise sp.CalledProcessError(result.returncode,
+                                                result.args, result.stdout, result.stderr)
 
             remote_url = (
                 f"https://x-access-token:{token}@github.com/{org}/{rname}.git"
@@ -647,7 +655,8 @@ def push(repo_path, org, name, public):
             log(f"  Done → https://github.com/{org}/{rname}")
 
         except sp.CalledProcessError as e:
-            error(f"  Failed: {rname} — {e}")
+            gh_msg = (e.stderr or e.stdout or "").strip()
+            error(f"  Failed: {rname} — {gh_msg or e}")
             failed.append(rname)
 
     if failed:
