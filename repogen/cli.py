@@ -556,24 +556,49 @@ def coverage(report):
 # ── push ──────────────────────────────────────────────────────────────────────
 
 @cli.command()
+@click.argument("repo_path", required=False, default=None)
 @click.option("--org", required=True, help="GitHub organisation or username")
-@click.option("--name", default=None, help="Push only this repo")
+@click.option("--name", default=None, help="Push only this repo (looked up in matrix.yaml then generated/)")
 @click.option("--private", is_flag=True, help="Create private repos")
-def push(org, name, private):
-    """Push verified repos to GitHub."""
+def push(repo_path, org, name, private):
+    """Push verified repos to GitHub.
+
+    \b
+    Examples:
+      repogen push --org my-org generated/Seapoint   # direct path
+      repogen push --org my-org --name Seapoint       # from matrix or generated/
+      repogen push --org my-org                       # all verified in matrix.yaml
+    """
     import subprocess as sp
 
-    try:
-        repos = load_matrix()
-    except FileNotFoundError as e:
-        error(str(e)); sys.exit(1)
-
-    progress = load_progress().get("repos", {})
-
-    if name:
-        repos = [r for r in repos if r["name"] == name]
+    # Direct path argument — bypasses matrix.yaml entirely
+    if repo_path:
+        p = Path(repo_path)
+        if not p.is_absolute():
+            p = (Path.cwd() / p).resolve()
+        if not p.exists():
+            error(f"Directory not found: {p}"); sys.exit(1)
+        repos = [{"name": p.name, "output": str(p.parent)}]
     else:
-        repos = [r for r in repos if progress.get(r["name"], {}).get("verified")]
+        try:
+            all_repos = load_matrix()
+        except FileNotFoundError:
+            all_repos = []
+
+        progress = load_progress().get("repos", {})
+
+        if name:
+            repos = [r for r in all_repos if r["name"] == name]
+            # Fall back to generated/<name> if not in matrix
+            if not repos:
+                fallback = ROOT / "generated" / name
+                if fallback.exists():
+                    repos = [{"name": name, "output": str(ROOT / "generated")}]
+                else:
+                    error(f"'{name}' not found in matrix.yaml and generated/{name} does not exist")
+                    sys.exit(1)
+        else:
+            repos = [r for r in all_repos if progress.get(r["name"], {}).get("verified")]
 
     if not repos:
         log("No verified repos to push.")
