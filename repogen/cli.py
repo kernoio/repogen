@@ -560,8 +560,8 @@ def coverage(report):
 @click.argument("repo_path", required=False, default=None)
 @click.option("--org", required=True, help="GitHub organisation or username")
 @click.option("--name", default=None, help="Push only this repo (looked up in matrix.yaml then generated/)")
-@click.option("--private", is_flag=True, help="Create private repos")
-def push(repo_path, org, name, private):
+@click.option("--public", is_flag=True, help="Create public repos (default: private)")
+def push(repo_path, org, name, public):
     """Push verified repos to GitHub.
 
     \b
@@ -611,7 +611,7 @@ def push(repo_path, org, name, private):
         token = ""
         warn("Could not get gh auth token — will attempt push without auth")
 
-    visibility = "--private" if private else "--public"
+    visibility = "--public" if public else "--private"
     failed = []
 
     for repo in repos:
